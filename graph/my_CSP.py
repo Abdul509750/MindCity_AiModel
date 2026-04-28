@@ -22,6 +22,9 @@ class CSP:
         for position in self.graph.nodes:
             self.subDomains[position] = self.domain.copy()  # each node gets its OWN copy
         self.algoObj.ForwardChecking(self , self.graph)    
+        print(position)
+    
+    
     """ • Industrial zones cannot be placed next to schools or hospitals
         • Every residential area must be within three road hops of at least one hospital
         • Power plants must be placed within 2 road hops of at least one Industrial zone, since they exist to
@@ -130,6 +133,6 @@ class CSP:
 
         elif proposed_domain == "Residential":
             return self.checkHospitalAvailability(current_Node, assignment)
-        elif proposed_domain =="Power Plants":
+        elif proposed_domain =="Power Plant":
             return self.checkIndustrialZone(current_Node , assignment)
         return True  #all constraints passed            

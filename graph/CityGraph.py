@@ -1,27 +1,30 @@
-from graph.LocationNode import LocationNode
-from graph.CSP import Csp
+from LocationNode import LocationNode
+from RoadNetwork import RoadNetwork
 class CityGraph:
-    # grid of 30x30
-    def __init__(self , row , col):
-           self.row = row
-           self.col = col
-           Graph = {}  # cost(r , c) -> node
-           EdgesCost = {} # node1 , node2 ->cost
-           self.initializeGraph()
-    
+    def __init__(self, row, col):
+        self.rows = row
+        self.cols = col
+        self.nodes = {}      # (r, c) -> node
+        self.EdgesCost = {}  # (node1, node2) -> cost
+        self.initializeGraph()
+
     def initializeGraph(self):
-         
-         for r in self.row:
-              for c in self.col:
-                  node = LocationNode(r,c)
-                  self.Graph[(r,c)] = node
+        # create all nodes
+        for r in range(self.rows):       
+            for c in range(self.cols):   
+                node = LocationNode(r, c)
+                self.nodes[(r, c)] = node
 
-         coordinates = [(1,0),(0,1),(-1,0),(0,-1)]
+        # create edges
+        coordinates = [(1,0), (0,1), (-1,0), (0,-1)]
+        for r in range(self.rows):       
+            for c in range(self.cols):   
+                for cX, cY in coordinates:
+                    nX, nY = r + cX, c + cY
+                    if (nX, nY) in self.nodes:
+                        self.EdgesCost[((r,c), (nX,nY))] = 1.0
 
-         for r in self.row:
-              for c in self.col:
-                   for cX , cY in coordinates:
-                        nX , nY = r + cX , c + cY
-                        if (nX , nY) in self.Graph:
-                             self.EdgesCost[(r,c) , (nX , nY)] = 1.0
-
+    def assignCosts(self):
+        rn = RoadNetwork(self)
+        rn.build()
+        return rn

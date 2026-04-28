@@ -1,41 +1,57 @@
+import copy
+
 class Algorithms:
-    def MRV(self, csp):
-        # find the unassigned node with the smallest subdomain
+    def MRV(self, csp, graph):
         min_node = None
         min_size = float('inf')
 
-        for position, node in csp.graph.nodes.items():
-            # only look at unassigned nodes
+        for position, node in graph.nodes.items():
             if node.NodeType == "":
                 domain_size = len(csp.subDomains[position])
                 if domain_size < min_size:
                     min_size = domain_size
                     min_node = node
 
-        return min_node  # node with fewest remaining options
+        return min_node
 
     def ForwardChecking(self, csp, graph):
-        # pick the most constrained node first using MRV
-        node = self.MRV(csp)
+        node = self.MRV(csp, graph)
 
+        # all nodes assigned 
         if node is None:
-            return True  # all nodes assigned
+            return graph
 
-        # try each type from its subdomain
-        for proposed_type in csp.subDomains[(node.Coordinates_X, node.Coordinates_Y)]:
-            if csp.binaryConstraints(graph.nodes, node, proposed_type):
-                # assign it
-                node.NodeType = proposed_type
+        for domain in csp.Getdomains(node):
+            if csp.binaryConstraints(graph.nodes, node, domain):
 
-                # recurse
-                result = self.ForwardChecking(csp, graph)
-                if result:
-                    return True
+                # assign
+                graph.nodes[(node.Coordinates_X, node.Coordinates_Y)].NodeType = domain
+                saved_domains = copy.deepcopy(csp.subDomains)
+                deadlock = False
 
-                # backtrack
-                node.NodeType = ""
+                # forward checking — prune neighbors
+                for position, nodey in graph.nodes.items():
+                    if nodey.NodeType != "":  # skip already assigned
+                        continue
 
-        return False  # no valid assignment found
+                    co_domain = []  #  reset for each node
+                    for domaini in csp.Getdomains(nodey):
+                        if csp.binaryConstraints(graph.nodes, nodey, domaini):
+                            co_domain.append(domaini)
 
+                    if len(co_domain) == 0:
+                        deadlock = True  # dead end
+                        break
 
-        # pruning/ forward checking is remainning / abhi backtrack bhi sai nhi dekhna
+                    csp.subDomains[(nodey.Coordinates_X, nodey.Coordinates_Y)] = co_domain
+
+                if not deadlock:
+                    result = self.ForwardChecking(csp, graph)
+                    if result is not None:
+                        return result  # solution found
+
+                # backtrack 
+                graph.nodes[(node.Coordinates_X, node.Coordinates_Y)].NodeType = ""
+                csp.subDomains = saved_domains
+
+        return None  # no valid assignment found
