@@ -11,13 +11,15 @@ class CityGraph:
         # quantity limits per type
         self.total = row * col
 
+        residential_estimate = int(self.total * 0.7)
+
         self.typeLimits = {
             "Residential":    float('inf'),
-            "Hospital":       max(1, int(self.total * 0.02)),   # 2% — rare
-            "School":         max(2, int(self.total * 0.08)),   # 8% — moderate
-            "Industrial":     max(3, int(self.total * 0.12)),   # 12% — decent zone
-            "Power Plant":    max(1, int(self.total * 0.02)),   # 2% — rare
-            "Ambulance Depot": (3)    # only 3 as asked in the question
+            "Hospital":       max(3, residential_estimate // 18),
+            "School":         max(2, int(self.total * 0.08)),
+            "Industrial":     max(3, int(self.total * 0.12)),
+            "Power Plant":    max(1, int(self.total * 0.02)),
+            "Ambulance Depot": 3
         }
         self.typeCounts = {
             "Residential":    0,
@@ -43,7 +45,36 @@ class CityGraph:
                     nX, nY = r + cX, c + cY
                     if (nX, nY) in self.nodes:
                         self.EdgesCost[((r,c), (nX,nY))] = 1.0
+    def ReallocateAmbulance(self):
+        from AmbulanceReplacment import my_AmbulanceReplacement
+        new_Instance = my_AmbulanceReplacement()
 
+        bestPositions = new_Instance.InitiateGA(self)
+
+        # Step 1: collect current ambulance nodes
+        old_ambulances = []
+        for node in self.nodes.values():
+            if node.NodeType == "Ambulance Depot":
+                old_ambulances.append(node)
+
+        # Step 2: swap DATA (not objects)
+        for i in range(min(3, len(bestPositions))):
+            src = bestPositions[i]      # new optimal node
+            dest = old_ambulances[i]    # current ambulance location
+
+            # swap all attributes EXCEPT coordinates
+            temp = (dest.NodeType, dest.RiskIndex, dest.Accessibility_flag, dest.PopulationDensity)
+
+            dest.NodeType = src.NodeType
+            dest.RiskIndex = src.RiskIndex
+            dest.Accessibility_flag = src.Accessibility_flag
+            dest.PopulationDensity = src.PopulationDensity
+
+            src.NodeType = temp[0]
+            src.RiskIndex = temp[1]
+            src.Accessibility_flag = temp[2]
+            src.PopulationDensity = temp[3]
+            
     def applyCSP(self):
         """Run Challenge 1 — assign node types via CSP."""
         from my_CSP import CSP
@@ -97,10 +128,12 @@ class CityGraph:
         print()
 
 if __name__ == "__main__":
-    graph = CityGraph(25, 25)   # step 1: build empty grid
+    graph = CityGraph(10, 10)   # step 1: build empty grid
     graph.applyCSP()          # step 2: assign node types (Challenge 1)
     graph.printGraph()        # step 3: see the layout
     graph.assignCosts()       # step 4: build roads (Challenge 2)
-
+    graph.ReallocateAmbulance()
+    print("After ambulance replacemnt--------------")
+    graph.printGraph()
 
 # issue till now the recursion is causing the solution to undergo expensive computaion like 10x10 node means 100 nodes check this out
