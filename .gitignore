@@ -1,0 +1,5 @@
+
+# ignore the python cache
+__pycache__/
+# any compiled file
+*$py.class

@@ -17,41 +17,58 @@ class Algorithms:
     def ForwardChecking(self, csp, graph):
         node = self.MRV(csp, graph)
 
-        # all nodes assigned 
         if node is None:
+            csp.validateFinalLayout(graph)
             return graph
 
-        for domain in csp.Getdomains(node):
+        r, c = node.Coordinates_X, node.Coordinates_Y
+
+        # ✅ only get direct neighbors instead of all 100 nodes
+        neighbor_positions = [
+            (r+1, c), (r-1, c), (r, c+1), (r, c-1)
+        ]
+        neighbor_positions = [p for p in neighbor_positions if p in graph.nodes]
+
+        for domain in csp.subDomains[(r, c)]:
             if csp.binaryConstraints(graph.nodes, node, domain):
 
                 # assign
-                graph.nodes[(node.Coordinates_X, node.Coordinates_Y)].NodeType = domain
-                saved_domains = copy.deepcopy(csp.subDomains)
+                graph.nodes[(r, c)].NodeType = domain
+                graph.typeCounts[domain] += 1
+
+                # ✅ only save neighbor domains not entire graph
+                saved_domains = {
+                    pos: csp.subDomains[pos].copy()
+                    for pos in neighbor_positions
+                }
                 deadlock = False
 
-                # forward checking — prune neighbors
-                for position, nodey in graph.nodes.items():
-                    if nodey.NodeType != "":  # skip already assigned
+                # ✅ prune only neighbors not all nodes
+                for pos in neighbor_positions:
+                    nodey = graph.nodes[pos]
+                    if nodey.NodeType != "":
                         continue
 
-                    co_domain = []  #  reset for each node
-                    for domaini in csp.Getdomains(nodey):
-                        if csp.binaryConstraints(graph.nodes, nodey, domaini):
-                            co_domain.append(domaini)
+                    co_domain = [
+                        d for d in csp.subDomains[pos]
+                        if csp.binaryConstraints(graph.nodes, nodey, d)
+                    ]
 
                     if len(co_domain) == 0:
-                        deadlock = True  # dead end
+                        deadlock = True
                         break
 
-                    csp.subDomains[(nodey.Coordinates_X, nodey.Coordinates_Y)] = co_domain
+                    csp.subDomains[pos] = co_domain
 
                 if not deadlock:
                     result = self.ForwardChecking(csp, graph)
                     if result is not None:
-                        return result  # solution found
+                        return result
 
-                # backtrack 
-                graph.nodes[(node.Coordinates_X, node.Coordinates_Y)].NodeType = ""
-                csp.subDomains = saved_domains
+                # backtrack
+                graph.nodes[(r, c)].NodeType = ""
+                graph.typeCounts[domain] -= 1
+                for pos, saved in saved_domains.items():
+                    csp.subDomains[pos] = saved
 
-        return None  # no valid assignment found
+        return None
