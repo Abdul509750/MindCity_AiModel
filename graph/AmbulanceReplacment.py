@@ -19,12 +19,12 @@ class my_AmbulanceReplacement:
             "":               0
         }
 
-        # ✅ added (minimal)
+        #  added (minimal)
         self.important_nodes = []
         self.distance_map = {}
 
     # --------------------------------------------------
-    # ✅ PREPROCESS (runs once, no heavy work later)
+    #  PREPROCESS (runs once, no heavy work later)
     # --------------------------------------------------
     def preprocess(self):
         for node in self.graph.nodes.values():
@@ -42,36 +42,36 @@ class my_AmbulanceReplacement:
     def calculateRowDensity(self, chromo):  
         FinalValue = 0
         for node in chromo:
-            # ❌ removed heavy row scan
-            # ✅ replaced with precomputed lookup
+            #  removed heavy row scan
+            #  replaced with precomputed lookup
             for d, nodeType in self.distance_map[node]:
                 weight = self.WEIGHTS.get(nodeType, 1)
                 FinalValue += weight / (d + 1)
         return FinalValue
 
     def calculateColDensity(self, chromo):
-        # ❌ no longer needed heavy column scan
+        #  no longer needed heavy column scan
         return 0
 
     def populate(self):
-        self.Population = []  # ✅ reset bug fix
+        self.Population = []  #  reset bug fix
         all_nodes = list(self.graph.nodes.values())
         for _ in range(self.POPULATION_SIZE):
             chromosome = random.sample(all_nodes, 3)
             self.Population.append(chromosome)
 
     def calculateFitness(self):  
-        self.fitnessScores = {}  # ✅ reset
+        self.fitnessScores = {}  #  reset
         for chromosome in self.Population:
             Fvalue = self.calculateRowDensity(chromosome) + self.calculateColDensity(chromosome)
             self.fitnessScores[tuple(chromosome)] = Fvalue
 
     def ParentSelection(self):
-        # ❌ sorted.list → fixed
+        #  sorted.list → fixed
         sorted_chromosomes = sorted(
             self.Population,
             key=lambda chromosome: self.fitnessScores.get(tuple(chromosome), 0),
-            reverse=True  # ✅ take best
+            reverse=True  #  take best
         )
 
         self.parent1 = sorted_chromosomes[0][:]
@@ -80,7 +80,7 @@ class my_AmbulanceReplacement:
         return self.parent1, self.parent2
     
     def crossover(self):
-        # ❌ overwrite bug → fixed swap
+        #  overwrite bug → fixed swap
         Node1 = self.parent1[2]
         Node2 = self.parent2[2]
 
@@ -88,7 +88,7 @@ class my_AmbulanceReplacement:
         self.parent2[2] = Node1
     
     def Replacment(self):
-        # ✅ minimal implementation (no fancy logic)
+        # minimal implementation (no fancy logic)
         sorted_pop = sorted(
             self.Population,
             key=lambda c: self.fitnessScores.get(tuple(c), 0)
@@ -100,7 +100,7 @@ class my_AmbulanceReplacement:
         self.Population = sorted_pop
 
     def mutate(self, chromosome):
-        # ✅ very light mutation (optional but important)
+        #  very light mutation (optional but important)
         idx = random.randint(0, 2)
         new_node = random.choice(list(self.graph.nodes.values()))
         chromosome[idx] = new_node
@@ -108,12 +108,12 @@ class my_AmbulanceReplacement:
     def InitiateGA(self, city_graph):
         self.graph = city_graph
 
-        # ✅ added once
+        # added once
         self.preprocess()
 
         self.populate()
 
-        # ✅ loop added (your idea: rows generations)
+        #  loop added (your idea: rows generations)
         for _ in range(self.graph.rows):
             self.calculateFitness()
             self.ParentSelection()
