@@ -5,8 +5,8 @@ class CityGraph:
     def __init__(self, row, col):
         self.rows = row
         self.cols = col
-        self.nodes = {}
-        self.EdgesCost = {}
+        self.nodes = {} #(r,c)-->node
+        self.EdgesCost = {} 
         
         # quantity limits per type
         self.total = row * col
