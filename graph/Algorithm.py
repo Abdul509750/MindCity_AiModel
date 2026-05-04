@@ -23,7 +23,7 @@ class Algorithms:
 
         r, c = node.Coordinates_X, node.Coordinates_Y
 
-        # ✅ only get direct neighbors instead of all 100 nodes
+        # only get direct neighbors instead of all 100 nodes
         neighbor_positions = [
             (r+1, c), (r-1, c), (r, c+1), (r, c-1)
         ]
@@ -36,14 +36,14 @@ class Algorithms:
                 graph.nodes[(r, c)].NodeType = domain
                 graph.typeCounts[domain] += 1
 
-                # ✅ only save neighbor domains not entire graph
+                # only save neighbor domains not entire graph
                 saved_domains = {
                     pos: csp.subDomains[pos].copy()
                     for pos in neighbor_positions
                 }
                 deadlock = False
 
-                # ✅ prune only neighbors not all nodes
+                #  prune only neighbors not all nodes
                 for pos in neighbor_positions:
                     nodey = graph.nodes[pos]
                     if nodey.NodeType != "":
