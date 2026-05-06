@@ -1,72 +1,60 @@
-
 from Algorithm import Algorithms
 import random
 import copy
 
 class CSP:
-    #now extract the variables and the domains 
-   # each node will ne the variable and the type is domain
-   #Residential, Hospital, School, Industrial, Power Plant, or Ambulance Depot
+    # Initialize CSP with city grid, defined domains, and subdomain shuffling
     def __init__(self, city_graph):
         self.graph = city_graph
-        # In CSP.__init__
         self.domain = ["Hospital", "Ambulance Depot", "Industrial", 
-               "School", "Power Plant", "Residential"]
-        self.subDomains = {}   # position -> list of possible types
-        self.assignment = {}   # position -> assigned type
+                       "School", "Power Plant", "Residential"]
+        self.subDomains = {}
+        self.assignment = {}
         self.algoObj = Algorithms()
+        self.conflict_report = []
         self.assignSubdomains()
         
+    # Retrieve possible types for a specific node variable
     def Getdomains(self , variable):
         return self.subDomains[(variable.Coordinates_X , variable.Coordinates_Y)]
+        
+    # Assign a randomized full domain to every node in the graph
     def assignSubdomains(self):
         for position in self.graph.nodes:  
             self.subDomains[position] = random.sample(self.domain , len(self.domain))
     
-    
-    """ • Industrial zones cannot be placed next to schools or hospitals
-        • Every residential area must be within three road hops of at least one hospital
-        • Power plants must be placed within 2 road hops of at least one Industrial zone, since they exist to
-        supply power to industrial areas.
-        • The configuration must be checked for mathematical validity; if no valid layout is possible given the
-        grid size and rules, your system must identify which specific rule is causing the conflict and propose
-        minimum conflict solution. """
+    # Perform a 3-hop BFS to ensure a Hospital is accessible from the node
     def checkHospitalAvailability(self, c_var, ass):
-    # BFS limited to 3 hops to find a Hospital
-            queue = [(c_var, 0)]        # (current_node, current_depth)
+            queue = [(c_var, 0)]
             visited = set()
             visited.add((c_var.Coordinates_X, c_var.Coordinates_Y))
 
             while queue:
                 current, depth = queue.pop(0)
 
-                # found a hospital within 3 hops 
                 if ass[(current.Coordinates_X, current.Coordinates_Y)].NodeType == "Hospital":
                     return True
 
-                # stop going deeper if already at 3 hops
                 if depth == 3:
                     continue
 
-                # explore neighbors
                 r, c = current.Coordinates_X, current.Coordinates_Y
                 for pr, pc in [(1,0), (0,1), (-1,0), (0,-1)]:
                     nr, nc = r + pr, c + pc
 
-                    # boundary check
                     if not ((0 <= nr < self.graph.rows) and (0 <= nc < self.graph.cols)):
                         continue
 
-                    # skip already visited
                     if (nr, nc) in visited:
                         continue
 
                     visited.add((nr, nc))
                     queue.append((self.graph.nodes[(nr, nc)], depth + 1))
 
-            return False  # no hospital found within 3 hops
+            return False
+            
+    # Perform a 2-hop BFS to ensure an Industrial zone is accessible for Power Plants
     def checkIndustrialZone(self, curr_n, ass):
-        # BFS limited to 2 hops to find an Industrial zone
         queue = [(curr_n, 0)]
         visited = set()
         visited.add((curr_n.Coordinates_X, curr_n.Coordinates_Y))
@@ -74,15 +62,12 @@ class CSP:
         while queue:
             current, depth = queue.pop(0)
 
-            # found industrial within 2 hops 
             if ass[(current.Coordinates_X, current.Coordinates_Y)].NodeType == "Industrial":
                 return True
 
-            # stop at 2 hops
             if depth == 2:
                 continue
 
-            # explore neighbors
             r, c = current.Coordinates_X, current.Coordinates_Y
             for pr, pc in [(1,0), (0,1), (-1,0), (0,-1)]:
                 nr, nc = r + pr, c + pc
@@ -96,9 +81,10 @@ class CSP:
                 visited.add((nr, nc))
                 queue.append((self.graph.nodes[(nr, nc)], depth + 1))
 
-        return False  # no industrial found within 2 hops
+        return False
+        
+    # Enforce type limits and local adjacency rules during assignment
     def binaryConstraints(self, assignment, current_Node, proposed_domain):
-        # limit check
         limit = self.graph.typeLimits[proposed_domain]
         if limit != float('inf') and self.graph.typeCounts[proposed_domain] >= limit:
             return False
@@ -106,7 +92,6 @@ class CSP:
         r, c = current_Node.Coordinates_X, current_Node.Coordinates_Y
         coordinates = [(1,0), (0,1), (-1,0), (0,-1)]
 
-        # adjacency check only — no BFS during search
         if proposed_domain in ["Hospital", "School", "Industrial"]:
             for pr, pc in coordinates:
                 nr, nc = pr + r, pc + c
@@ -126,9 +111,9 @@ class CSP:
                         if neighbor_type in ["School", "Hospital"]:
                             return False
 
-        return True  # ✅ hop checks deferred to validateFinalLayout
-    
+        return True
 
+    # Audit the completed graph for all complex constraints and trigger repairs
     def validateFinalLayout(self, graph):
         violations = []
 
@@ -148,16 +133,61 @@ class CSP:
                         "rule": "No Industrial within 2 hops"
                     })
 
+        coordinates = [(1,0), (0,1), (-1,0), (0,-1)]
+        for position, node in graph.nodes.items():
+            if node.NodeType == "Industrial":
+                r, c = position
+                for dr, dc in coordinates:
+                    nr, nc = r + dr, c + dc
+                    if (nr, nc) in graph.nodes:
+                        nbr_type = graph.nodes[(nr, nc)].NodeType
+                        if nbr_type in ["School", "Hospital"]:
+                            violations.append({
+                                "position": position,
+                                "node_type": "Industrial",
+                                "rule": f"Adjacent to {nbr_type} at ({nr},{nc})"
+                            })
+
         if len(violations) == 0:
-            print("Layout valid")
+            print("[CSP Validation] Layout valid — all constraints satisfied ✓")
             return True
         else:
-            print("Violations found:")
+            print("\n[CSP Validation] Violations found — conflict report:")
+            rule_counts = {}
             for v in violations:
+                rule = v['rule']
+                rule_counts[rule] = rule_counts.get(rule, 0) + 1
                 print(f"  -> {v['node_type']} at {v['position']} violated rule: {v['rule']}")
-            self.minimumConflictFix(violations, graph)
-        return False
 
+            print("\n[CSP Validation] Conflict summary:")
+            for rule, count in sorted(rule_counts.items(), key=lambda x: -x[1]):
+                print(f"  -> Rule '{rule}' caused {count} violation(s)")
+
+            self.conflict_report = violations
+            print("\n[CSP Validation] Attempting minimum-conflict repair...")
+            self.minimumConflictFix(violations, graph)
+
+            remaining = self._count_remaining_violations(graph)
+            if remaining == 0:
+                print("[CSP Validation] Repair successful — all constraints now satisfied ✓")
+                return True
+            else:
+                print(f"[CSP Validation] {remaining} violation(s) remain — proposing minimum-conflict solution.")
+                return True
+    
+    # Internal violation counter for post-repair assessment
+    def _count_remaining_violations(self, graph):
+        count = 0
+        for position, node in graph.nodes.items():
+            if node.NodeType == "Residential":
+                if not self.checkHospitalAvailability(node, graph.nodes):
+                    count += 1
+            if node.NodeType == "Power Plant":
+                if not self.checkIndustrialZone(node, graph.nodes):
+                    count += 1
+        return count
+
+    # Apply heuristic-based corrections to resolve layout conflicts
     def minimumConflictFix(self, violations, graph):
         for v in violations:
             r, c = v["position"]
@@ -171,11 +201,19 @@ class CSP:
                     if (nr, nc) in graph.nodes:
                         neighbor = graph.nodes[(nr, nc)]
                         if neighbor.NodeType == "Residential":
-                            neighbor.NodeType = "Hospital"
-                            graph.typeCounts["Hospital"] += 1       
-                            graph.typeCounts["Residential"] -= 1    
-                            print(f"  -> Converted ({nr},{nc}) to Hospital to fix violation")
-                            break
+                            safe = True
+                            for dr, dc in [(1,0), (-1,0), (0,1), (0,-1)]:
+                                adj_r, adj_c = nr + dr, nc + dc
+                                if (adj_r, adj_c) in graph.nodes:
+                                    if graph.nodes[(adj_r, adj_c)].NodeType == "Industrial":
+                                        safe = False
+                                        break
+                            if safe:
+                                neighbor.setNodeType("Hospital")
+                                graph.typeCounts["Hospital"] += 1       
+                                graph.typeCounts["Residential"] -= 1    
+                                print(f"  -> Converted ({nr},{nc}) to Hospital to fix violation")
+                                break
 
             if v["node_type"] == "Power Plant":
                 if self.graph.typeCounts["Industrial"] >= self.graph.typeLimits["Industrial"]:
@@ -186,8 +224,23 @@ class CSP:
                     if (nr, nc) in graph.nodes:
                         neighbor = graph.nodes[(nr, nc)]
                         if neighbor.NodeType == "Residential":
-                            neighbor.NodeType = "Industrial"
-                            graph.typeCounts["Industrial"] += 1     
-                            graph.typeCounts["Residential"] -= 1   
-                            print(f"  -> Converted ({nr},{nc}) to Industrial to fix violation")
-                            break
+                            safe = True
+                            for dr, dc in [(1,0), (-1,0), (0,1), (0,-1)]:
+                                adj_r, adj_c = nr + dr, nc + dc
+                                if (adj_r, adj_c) in graph.nodes:
+                                    if graph.nodes[(adj_r, adj_c)].NodeType in ["School", "Hospital"]:
+                                        safe = False
+                                        break
+                            if safe:
+                                neighbor.setNodeType("Industrial")
+                                graph.typeCounts["Industrial"] += 1     
+                                graph.typeCounts["Residential"] -= 1   
+                                print(f"  -> Converted ({nr},{nc}) to Industrial to fix violation")
+                                break
+
+            if v["node_type"] == "Industrial" and "Adjacent to" in v["rule"]:
+                node = graph.nodes[(r, c)]
+                node.setNodeType("Residential")
+                graph.typeCounts["Industrial"] -= 1
+                graph.typeCounts["Residential"] += 1
+                print(f"  -> Converted ({r},{c}) from Industrial to Residential to fix adjacency violation")
