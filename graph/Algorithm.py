@@ -30,7 +30,11 @@ class Algorithms:
         r, c = node.Coordinates_X, node.Coordinates_Y
         self.nodes_explored += 1
 
-        neighbor_positions = [p for p in [(r+1, c), (r-1, c), (r, c+1), (r, c-1)] if p in graph.nodes]
+        # only get direct neighbors instead of all 100 nodes
+        neighbor_positions = [
+            (r+1, c), (r-1, c), (r, c+1), (r, c-1)
+        ]
+        neighbor_positions = [p for p in neighbor_positions if p in graph.nodes]
 
         for domain in csp.subDomains[(r, c)]:
             if csp.binaryConstraints(graph.nodes, node, domain):
@@ -38,9 +42,14 @@ class Algorithms:
                 graph.nodes[(r, c)].setNodeType(domain)
                 graph.typeCounts[domain] += 1
 
-                saved_domains = {pos: csp.subDomains[pos].copy() for pos in neighbor_positions}
+                # only save neighbor domains not entire graph
+                saved_domains = {
+                    pos: csp.subDomains[pos].copy()
+                    for pos in neighbor_positions
+                }
                 deadlock = False
 
+                #  prune only neighbors not all nodes
                 for pos in neighbor_positions:
                     nodey = graph.nodes[pos]
                     if nodey.NodeType != "":
