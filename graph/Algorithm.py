@@ -7,6 +7,11 @@ class Algorithms:
         self.nodes_explored = 0   
         self.backtrack_count = 0  
 
+    # Apply Minimum Remaining Values heuristic to select the next node
+    def MRV(self, csp, graph):
+        min_node = None
+        min_size = float('inf')
+
     # Apply Minimum Remaining Values heuristic with Stochastic Tie-Breaking
     def MRV(self, csp, graph):
         min_size = float('inf')
@@ -18,13 +23,8 @@ class Algorithms:
                 domain_size = len(csp.subDomains[position])
                 if domain_size < min_size:
                     min_size = domain_size
-                    candidates = [node]
-                elif domain_size == min_size:
-                    candidates.append(node)
-                    
-        if candidates:
-            return random.choice(candidates) # Scatter search across the grid
-        return None
+                    min_node = node
+        return min_node
 
     # Execute Forward Checking with local pruning and backtracking
     def ForwardChecking(self, csp, graph):
@@ -37,7 +37,11 @@ class Algorithms:
         r, c = node.Coordinates_X, node.Coordinates_Y
         self.nodes_explored += 1
 
-        neighbor_positions = [p for p in [(r+1, c), (r-1, c), (r, c+1), (r, c-1)] if p in graph.nodes]
+        # only get direct neighbors instead of all 100 nodes
+        neighbor_positions = [
+            (r+1, c), (r-1, c), (r, c+1), (r, c-1)
+        ]
+        neighbor_positions = [p for p in neighbor_positions if p in graph.nodes]
 
         for domain in csp.subDomains[(r, c)]:
             if csp.binaryConstraints(graph.nodes, node, domain):
@@ -45,9 +49,14 @@ class Algorithms:
                 graph.nodes[(r, c)].setNodeType(domain)
                 graph.typeCounts[domain] += 1
 
-                saved_domains = {pos: csp.subDomains[pos].copy() for pos in neighbor_positions}
+                # only save neighbor domains not entire graph
+                saved_domains = {
+                    pos: csp.subDomains[pos].copy()
+                    for pos in neighbor_positions
+                }
                 deadlock = False
 
+                #  prune only neighbors not all nodes
                 for pos in neighbor_positions:
                     nodey = graph.nodes[pos]
                     if nodey.NodeType != "":

@@ -97,31 +97,20 @@ class CrimePredictor:
 
     # Generate weighted risk labels using population, proximity, and type scores
     def generate_synthetic_data(self):
-        scores = {}
-        # First, calculate raw continuous scores for the whole grid
         for pos, feat in self.features.items():
             pop = feat[0] 
             dist = feat[1] 
             type_score = feat[2] 
 
             base_score = (pop * 0.4) + ((1.0 - dist) * 0.35) + (type_score * 0.25)
-            scores[pos] = base_score + random.uniform(-0.1, 0.1)
-
-        # --- OPTIMIZATION: Grade on a curve to ensure Low Risk nodes exist ---
-        # Sort scores and use 33% / 66% percentiles (tertiles) as dynamic thresholds
-        sorted_scores = sorted(scores.values())
-        n = len(sorted_scores)
-        low_thresh = sorted_scores[n // 3] if n > 0 else 0
-        high_thresh = sorted_scores[(2 * n) // 3] if n > 0 else 0
-
-        for pos, score in scores.items():
-            if score >= high_thresh:
+            score = base_score + random.uniform(-0.1, 0.1)
+            
+            if score > 0.65:
                 self.dataset[pos] = "High"
-            elif score >= low_thresh:
+            elif score > 0.35:
                 self.dataset[pos] = "Medium"
             else:
                 self.dataset[pos] = "Low"
-        # ---------------------------------------------------------------------
 
         counts = {"High": 0, "Medium": 0, "Low": 0}
         for label in self.dataset.values():
