@@ -156,35 +156,69 @@ class CityGraph:
         self.event_log.append(message)
         print(message)
 
-    # Execute Genetic Algorithm for ambulance placement and swap node data
+    def _node_snapshot(self, node):
+        return (
+            node.NodeType,
+            node.RiskIndex,
+            node.Accessibility_flag,
+            node.PopulationDensity,
+            getattr(node, "is_primary_hospital", False),
+        )
+
+    def _apply_snapshot(self, node, snap):
+        nt, ri, af, pd, iph = snap
+        node.NodeType = nt
+        node.RiskIndex = ri
+        node.Accessibility_flag = af
+        node.PopulationDensity = pd
+        node.is_primary_hospital = iph
+
+    def _rebuild_type_counts(self):
+        for k in self.typeCounts:
+            self.typeCounts[k] = 0
+        for node in self.nodes.values():
+            t = node.NodeType
+            if t in self.typeCounts:
+                self.typeCounts[t] += 1
+
+    # Execute Genetic Algorithm for ambulance placement; place depots on chosen cells only
     def ReallocateAmbulance(self):
         from AmbulanceReplacment import my_AmbulanceReplacement
         new_Instance = my_AmbulanceReplacement()
 
-        bestPositions = new_Instance.InitiateGA(self)
+        best = new_Instance.InitiateGA(self)
+        if not best or len(best) < 3:
+            self.log_event("[Challenge 3] Ambulance GA returned no layout; skipping move.")
+            self.sync_redundancy_paths()
+            return
 
-        old_ambulances = []
-        for node in self.nodes.values():
-            if node.NodeType == "Ambulance Depot":
-                old_ambulances.append(node)
+        old_depots = sorted(
+            [pos for pos, n in self.nodes.items() if n.NodeType == "Ambulance Depot"],
+            key=lambda p: (p[0], p[1]),
+        )
+        new_depots = sorted(
+            {(n.Coordinates_X, n.Coordinates_Y) for n in best},
+            key=lambda p: (p[0], p[1]),
+        )
+        if len(new_depots) < 3 or len(old_depots) != 3:
+            self.log_event("[Challenge 3] Need 3 depots old/new; skipping move.")
+            self.sync_redundancy_paths()
+            return
 
-        for i in range(min(3, len(bestPositions))):
-            src = bestPositions[i]      
-            dest = old_ambulances[i]    
+        old_set, new_set = set(old_depots), set(new_depots)
+        snap = {pos: self._node_snapshot(self.nodes[pos]) for pos in old_set | new_set}
+        vacated = sorted(old_set - new_set)
+        incoming = sorted(new_set - old_set)
+        for i, q in enumerate(vacated):
+            self._apply_snapshot(self.nodes[q], snap[incoming[i]])
+        for pos in new_set:
+            self.nodes[pos].setNodeType("Ambulance Depot")
 
-            temp = (dest.NodeType, dest.RiskIndex, dest.Accessibility_flag, dest.PopulationDensity)
-
-            dest.NodeType = src.NodeType
-            dest.RiskIndex = src.RiskIndex
-            dest.Accessibility_flag = src.Accessibility_flag
-            dest.PopulationDensity = src.PopulationDensity
-
-            src.NodeType = temp[0]
-            src.RiskIndex = temp[1]
-            src.Accessibility_flag = temp[2]
-            src.PopulationDensity = temp[3]
-
-        self.log_event("[Challenge 3] Ambulance positions re-evaluated and updated.")
+        self._rebuild_type_counts()
+        self.log_event(
+            "[Challenge 3] Ambulance positions updated. "
+            f"Depot cells (row, col): {new_depots} | previous: {old_depots}"
+        )
         self.sync_redundancy_paths()
 
     # Trigger Forward Checking CSP to assign node types

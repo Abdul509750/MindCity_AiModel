@@ -1,77 +1,76 @@
 import heapq
 
+
 class AstarEngine:
-    # Initialize heuristic and local graph storage
     def __init__(self):
-        self.heuristics = {}
-        self.city_graph = {}
+        self.city_graph = None
 
-    # Calculate Manhattan distance between two nodes
-    def ReturnManhatten(self , node , goal ):
-        tuple1 = (node.Coordinates_X , node.Coordinates_Y)
-        tuple2 = (goal.Coordinates_X , goal.Coordinates_Y)
-        return (abs(tuple2[0] - tuple1[0]) + abs(tuple2[1] - tuple1[1]))*0.5
-     
-    # Populate heuristics dictionary based on goal position
-    def initializeHeuristics(self , goal): 
-        for pos , node in self.city_graph.nodes.items():
-            heuristic = self.ReturnManhatten(node , goal)
-            self.heuristics[(pos)] = heuristic
+    def _min_edge_cost(self, graph):
+        m = None
+        for c in graph.EdgesCost.values():
+            if c > 0:
+                if m is None or c < m:
+                    m = c
+        return m if m is not None else 1.0
 
-    # Execute A* search respecting road blocks and accessibility flags
+    def _heuristic_to_goal(self, pos, goal_pos, min_w):
+        """Admissible: min_w * Manhattan <= true shortest path on 4-neighbor grid if every step costs >= min_w."""
+        dr = abs(pos[0] - goal_pos[0]) + abs(pos[1] - goal_pos[1])
+        return min_w * dr
+
     def toFindPath(self, start, goal):
+        """A* with lazy deletion: skip pop when g > best_g[pos]. Returns (path_nodes, cost) or (None, inf)."""
+        graph = self.city_graph
         goal_pos = (goal.Coordinates_X, goal.Coordinates_Y)
-        open_list = []
-        heapq.heappush(open_list, (0, 0, start, [start]))
-        visited = set()
+        start_pos = (start.Coordinates_X, start.Coordinates_Y)
+        min_w = self._min_edge_cost(graph)
 
-        while open_list:
-            f, g, current, path = heapq.heappop(open_list)
-            current_pos = (current.Coordinates_X, current.Coordinates_Y)
+        def h_fn(p):
+            return self._heuristic_to_goal(p, goal_pos, min_w)
 
-            if current_pos in visited:
+        open_heap = []
+        heapq.heappush(open_heap, (h_fn(start_pos), 0.0, start_pos))
+        best_g = {start_pos: 0.0}
+        parent = {start_pos: None}
+
+        while open_heap:
+            f, g, pos = heapq.heappop(open_heap)
+            if g > best_g.get(pos, float("inf")):
                 continue
-            visited.add(current_pos)
+            if pos == goal_pos:
+                coords = []
+                p = pos
+                while p is not None:
+                    coords.append(p)
+                    p = parent[p]
+                coords.reverse()
+                path_nodes = [graph.nodes[p] for p in coords]
+                return path_nodes, g
 
-            if current_pos == goal_pos:
-                return path, g
-
-            neighbourCoordinates = [(0,1), (1,0), (0,-1), (-1,0)]
-            for dr, dc in neighbourCoordinates:
-                nr, nc = current_pos[0] + dr, current_pos[1] + dc
-                neighbor_pos = (nr, nc)
-
-                if neighbor_pos not in self.city_graph.nodes:
+            for dr, dc in ((0, 1), (1, 0), (0, -1), (-1, 0)):
+                npos = (pos[0] + dr, pos[1] + dc)
+                if npos not in graph.nodes:
                     continue
-                if neighbor_pos in visited:
+                if not graph.nodes[npos].Accessibility_flag:
                     continue
-
-                neighbor_node = self.city_graph.nodes[neighbor_pos]
-
-                if not neighbor_node.Accessibility_flag:
+                edge_key = (pos, npos)
+                if edge_key not in graph.EdgesCost:
                     continue
+                edge_cost = graph.EdgesCost[edge_key]
+                new_g = g + edge_cost
+                if new_g < best_g.get(npos, float("inf")):
+                    best_g[npos] = new_g
+                    parent[npos] = pos
+                    heapq.heappush(open_heap, (new_g + h_fn(npos), new_g, npos))
 
-                edge_key = (current_pos, neighbor_pos)
-                if edge_key not in self.city_graph.EdgesCost:
-                    continue
+        return None, float("inf")
 
-                edge_cost = self.city_graph.EdgesCost[edge_key]
-                g_new = g + edge_cost
-                h_new = self.heuristics.get(neighbor_pos, 0)
-                f_new = g_new + h_new
-
-                heapq.heappush(open_list, (f_new, g_new, neighbor_node, path + [neighbor_node]))
-
-        return None, float('inf')
-
-    # Trigger A* pathfinding for a single target
-    def FindPath(self , start , goal , graph):
+    def FindPath(self, start, goal, graph):
         self.city_graph = graph
-        self.initializeHeuristics(goal)
-        return self.toFindPath(start , goal)
+        return self.toFindPath(start, goal)
 
-    # Route sequentially through a list of targets
     def FindSequentialPath(self, start, targets, graph):
+        """Visit targets in order. Stops at first unreachable segment."""
         self.city_graph = graph
         current = start
         full_path = [start]
@@ -79,7 +78,6 @@ class AstarEngine:
         segments = []
 
         for i, target in enumerate(targets):
-            self.initializeHeuristics(target)
             path, cost = self.toFindPath(current, target)
 
             if path is None:
@@ -87,11 +85,14 @@ class AstarEngine:
                     "from": (current.Coordinates_X, current.Coordinates_Y),
                     "to": (target.Coordinates_X, target.Coordinates_Y),
                     "status": "UNREACHABLE",
-                    "cost": float('inf')
+                    "cost": float("inf"),
+                    "index": i,
                 }
                 segments.append(seg_info)
-                print(f"  [A*] Segment {i+1}: {seg_info['from']} -> {seg_info['to']} — UNREACHABLE")
-                continue
+                print(
+                    f"  [A*] Segment {i + 1}: {seg_info['from']} -> {seg_info['to']} — UNREACHABLE"
+                )
+                return full_path, total_cost, segments
 
             full_path.extend(path[1:])
             total_cost += cost
@@ -102,14 +103,20 @@ class AstarEngine:
                 "to": (target.Coordinates_X, target.Coordinates_Y),
                 "status": "OK",
                 "cost": cost,
-                "hops": len(path) - 1
+                "hops": len(path) - 1,
+                "index": i,
             }
             segments.append(seg_info)
-            print(f"  [A*] Segment {i+1}: {seg_info['from']} -> {seg_info['to']} — cost={cost:.2f}, hops={len(path)-1}")
+            print(
+                f"  [A*] Segment {i + 1}: {seg_info['from']} -> {seg_info['to']} — "
+                f"cost={cost:.2f}, hops={len(path) - 1}"
+            )
 
         return full_path, total_cost, segments
 
-    # Recalculate remaining path segments in response to environment changes
     def DynamicReroute(self, current_node, remaining_targets, graph):
-        print(f"  [A*] REROUTING from ({current_node.Coordinates_X},{current_node.Coordinates_Y}) — {len(remaining_targets)} target(s) remaining.")
+        print(
+            f"  [A*] REROUTE from ({current_node.Coordinates_X},{current_node.Coordinates_Y}) — "
+            f"{len(remaining_targets)} target(s) left."
+        )
         return self.FindSequentialPath(current_node, remaining_targets, graph)

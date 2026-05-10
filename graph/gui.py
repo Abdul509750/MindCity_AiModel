@@ -3,8 +3,7 @@
 CityMind — Advanced Holographic Command Center v4.0
 ══════════════════════════════════════════════════════════════════════════
 """
-import sys, os, random, time, math
-from collections import deque
+import sys, os, random, math
 
 # pyrefly: ignore [missing-import]
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QGraphicsView, QGraphicsScene, 
@@ -14,7 +13,7 @@ from PyQt5.QtWidgets import (QApplication, QMainWindow, QGraphicsView, QGraphics
 # pyrefly: ignore [missing-import]
 from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF, QFont, QPainter, QLinearGradient
 # pyrefly: ignore [missing-import]
-from PyQt5.QtCore import Qt, QPointF, QTimer, pyqtSignal, QObject
+from PyQt5.QtCore import Qt, QPointF, QTimer
 
 sys.setrecursionlimit(10000)
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -34,6 +33,9 @@ FLOOD_COLOR = QColor(239, 68, 68)  # Red
 # Two edge-disjoint backup routes (primary hospital → reference depot)
 REDUNDANT_PATH_A = QColor(6, 182, 212)
 REDUNDANT_PATH_B = QColor(249, 115, 22)
+# After a flood, newly computed route (prominent)
+REROUTE_PATH_COLOR = QColor(217, 70, 239)
+TEAM_MARKER_COLOR = QColor(250, 204, 21)
 
 def path_to_undirected_edges(path):
     edges = set()
@@ -93,12 +95,20 @@ class CityMindWindow(QMainWindow):
         
         self.graph = None
         self.sim_step = 0
-        self.civilians = []
         self.rescue_path = []
         self.amb_positions = []
         self.flood_edges = []
         self.view_mode = "3D"  
         self.cell_size = 65
+        # Challenge 4 — medical team mission
+        self.mission_queue = []
+        self.mission_ptr = 0
+        self.team_pos = None
+        self.prev_plan_edges = set()
+        self.reroute_glow_edges = set()
+        self.reroute_glow_until_step = -1
+        self.mission_failed = False
+        self.mission_fail_reason = ""
 
         self._setup_ui()
 
@@ -155,10 +165,15 @@ class CityMindWindow(QMainWindow):
         self.chk_redundant.setChecked(True)
         self.chk_redundant.stateChanged.connect(self.render_scene)
 
+        self.chk_emergencies = QCheckBox("Random emergencies (extra calls)")
+        self.chk_emergencies.setChecked(True)
+        self.chk_emergencies.stateChanged.connect(self.render_scene)
+
         layer_layout.addWidget(self.chk_roads)
         layer_layout.addWidget(self.chk_amb)
         layer_layout.addWidget(self.chk_risk)
         layer_layout.addWidget(self.chk_redundant)
+        layer_layout.addWidget(self.chk_emergencies)
         layer_group.setLayout(layer_layout)
         control_layout.addWidget(layer_group)
 
@@ -211,8 +226,15 @@ class CityMindWindow(QMainWindow):
         rows, cols = self.row_spin.value(), self.col_spin.value()
         self.sim_step = 0
         self.flood_edges = []
-        self.civilians = []
         self.rescue_path = []
+        self.mission_queue = []
+        self.mission_ptr = 0
+        self.team_pos = None
+        self.prev_plan_edges = set()
+        self.reroute_glow_edges = set()
+        self.reroute_glow_until_step = -1
+        self.mission_failed = False
+        self.mission_fail_reason = ""
         self.lbl_step.setText(f"TIMELINE STEP: 0 / 20")
         self.log_list.clear()
 
@@ -234,9 +256,22 @@ class CityMindWindow(QMainWindow):
         
         self.graph.ReallocateAmbulance()
 
-        self.amb_positions = [p for p, n in self.graph.nodes.items() if n.NodeType == "Ambulance Depot"]
-        res = [p for p, n in self.graph.nodes.items() if n.NodeType == "Residential"]
-        self.civilians = random.sample(res, min(4, len(res))) if len(res) >= 4 else res[:]
+        self.amb_positions = sorted(
+            [p for p, n in self.graph.nodes.items() if n.NodeType == "Ambulance Depot"],
+            key=lambda p: (p[0], p[1]),
+        )
+        res_sorted = sorted(
+            [p for p, n in self.graph.nodes.items() if n.NodeType == "Residential"],
+            key=lambda p: (p[0], p[1]),
+        )
+        self.mission_queue = res_sorted[: min(4, len(res_sorted))]
+        self.mission_ptr = 0
+        if self.amb_positions:
+            self.team_pos = self.amb_positions[0]
+        self.log(
+            f"Medical mission order (row-major): {self.mission_queue}",
+            "info",
+        )
 
         self.render_scene()
         self.view.resetTransform()
@@ -258,33 +293,95 @@ class CityMindWindow(QMainWindow):
             self.log("Simulation concluded.", "success")
 
     def _do_step(self):
-        if not self.graph or self.sim_step >= 20: return
+        if not self.graph or self.sim_step >= 20:
+            return
         self.sim_step += 1
         self.lbl_step.setText(f"TIMELINE STEP: {self.sim_step} / 20")
 
+        had_flood = False
         if random.random() < 0.25:
             blocked = self.graph.trigger_random_flood()
+            if blocked:
+                had_flood = True
             for a, b in blocked:
                 self.flood_edges.append((a, b))
                 self.log(f"CRITICAL: Road {a}<->{b} collapsed!", "danger")
 
-        if self.civilians and self.amb_positions:
-            engine = AstarEngine()
-            start = self.graph.nodes[self.amb_positions[0]]
-            tgts = [self.graph.nodes[c] for c in self.civilians if c in self.graph.nodes]
-            if tgts:
-                path, cost, _ = engine.FindSequentialPath(start, tgts, self.graph)
-                if path:
-                    self.rescue_path = [(n.Coordinates_X, n.Coordinates_Y) for n in path]
-                    self.log(f"Route secured. Cost: {cost:.1f}", "success")
-                else:
-                    self.rescue_path = []
-                    self.log("Routing failure. Paths blocked.", "danger")
+        if (
+            self.chk_emergencies.isChecked()
+            and random.random() < 0.14
+            and self.graph
+        ):
+            candidates = [
+                p
+                for p, n in self.graph.nodes.items()
+                if n.NodeType == "Residential" and p not in self.mission_queue
+            ]
+            if candidates:
+                epos = random.choice(candidates)
+                self.mission_queue.append(epos)
+                self.log(f"EMERGENCY CALL: respond to residential {epos}", "warn")
 
         if self.sim_step % 5 == 0:
             self.graph.ReallocateAmbulance()
-            self.amb_positions = [p for p, n in self.graph.nodes.items() if n.NodeType == "Ambulance Depot"]
+            self.amb_positions = sorted(
+                [p for p, n in self.graph.nodes.items() if n.NodeType == "Ambulance Depot"],
+                key=lambda p: (p[0], p[1]),
+            )
             self.log("GA: Ambulances reallocated.", "info")
+
+        if (
+            self.team_pos is not None
+            and self.mission_ptr < len(self.mission_queue)
+            and not self.mission_failed
+        ):
+            remaining = self.mission_queue[self.mission_ptr :]
+            targets = [self.graph.nodes[c] for c in remaining if c in self.graph.nodes]
+            start = self.graph.nodes[self.team_pos]
+            engine = AstarEngine()
+
+            if had_flood:
+                path_nodes, cost, segs = engine.DynamicReroute(start, targets, self.graph)
+            else:
+                path_nodes, cost, segs = engine.FindSequentialPath(start, targets, self.graph)
+
+            bad = next((s for s in segs if s.get("status") == "UNREACHABLE"), None)
+            if bad:
+                self.mission_failed = True
+                self.mission_fail_reason = (
+                    f"segment {bad.get('index', '?') + 1}: {bad['from']} -> {bad['to']}"
+                )
+                self.log(f"MISSION FAILED — {self.mission_fail_reason}", "danger")
+                self.rescue_path = []
+            else:
+                coords = [(n.Coordinates_X, n.Coordinates_Y) for n in path_nodes]
+                self.rescue_path = coords
+                new_edges = path_to_undirected_edges(coords)
+                if had_flood and self.prev_plan_edges and new_edges != self.prev_plan_edges:
+                    self.reroute_glow_edges = set(new_edges)
+                    self.reroute_glow_until_step = self.sim_step + 4
+                    self.log("Route RECOMPUTED after flood (magenta on map).", "warn")
+                elif had_flood and not self.prev_plan_edges:
+                    self.reroute_glow_edges = set(new_edges)
+                    self.reroute_glow_until_step = self.sim_step + 4
+                self.prev_plan_edges = new_edges
+
+                if len(coords) >= 2 and coords[0] == self.team_pos:
+                    self.team_pos = coords[1]
+                elif coords:
+                    self.team_pos = coords[0]
+
+                if (
+                    self.mission_ptr < len(self.mission_queue)
+                    and self.team_pos == self.mission_queue[self.mission_ptr]
+                ):
+                    self.mission_ptr += 1
+                    self.log(f"Target reached ({self.team_pos}). Next leg.", "success")
+
+        elif self.mission_ptr >= len(self.mission_queue) and len(self.mission_queue):
+            self.rescue_path = [self.team_pos] if self.team_pos else []
+            if self.sim_step % 7 == 0 and self.amb_positions:
+                self.log("Mission queue complete. Team idle / at last cell.", "info")
 
         self.render_scene()
 
@@ -306,6 +403,10 @@ class CityMindWindow(QMainWindow):
 
         path_set = set((min(a,b), max(a,b)) for a, b in zip(self.rescue_path[:-1], self.rescue_path[1:])) if self.rescue_path else set()
         flood_set = set((min(a,b), max(a,b)) for a, b in self.flood_edges)
+        reroute_on = (
+            self.reroute_glow_edges
+            and self.sim_step <= self.reroute_glow_until_step
+        )
         nodes_data = [(pos[0], pos[1], nd) for pos, nd in self.graph.nodes.items()]
 
         show_roads = self.chk_roads.isChecked()
@@ -355,6 +456,32 @@ class CityMindWindow(QMainWindow):
                         self.scene.addLine(p1.x(), p1.y(), p2.x(), p2.y(), QPen(PATH_COLOR, 3))
                     else:
                         self.scene.addLine(p1.x(), p1.y(), p2.x(), p2.y(), QPen(ROAD_COLOR, 2))
+
+                # Floods remove edges from EdgesCost; draw cuts from flood_edges so they stay visible.
+                still_open = {(min(u, v), max(u, v)) for (u, v) in self.graph.EdgesCost}
+                for key in flood_set:
+                    if key in still_open:
+                        continue
+                    u, v = key
+                    p1 = self.iso_project(u[0] + 0.5, u[1] + 0.5, 0)
+                    p2 = self.iso_project(v[0] + 0.5, v[1] + 0.5, 0)
+                    self.scene.addLine(
+                        p1.x(), p1.y(), p2.x(), p2.y(),
+                        QPen(FLOOD_COLOR, 4, Qt.DashLine),
+                    )
+
+            if show_roads and reroute_on:
+                for u, v in self.reroute_glow_edges:
+                    p1 = self.iso_project(u[0] + 0.5, u[1] + 0.5, 0)
+                    p2 = self.iso_project(v[0] + 0.5, v[1] + 0.5, 0)
+                    self.scene.addLine(
+                        p1.x(), p1.y(), p2.x(), p2.y(),
+                        QPen(QColor(250, 232, 255), 10),
+                    )
+                    self.scene.addLine(
+                        p1.x(), p1.y(), p2.x(), p2.y(),
+                        QPen(REROUTE_PATH_COLOR, 5),
+                    )
 
             if show_roads and show_redundant and getattr(self.graph, "redundancy_ok", False):
                 for key, col, w in ((red_edges_a, REDUNDANT_PATH_A, 5), (red_edges_b, REDUNDANT_PATH_B, 5)):
@@ -436,6 +563,14 @@ class CityMindWindow(QMainWindow):
                     self.scene.addEllipse(center.x() - cov_radius, center.y() - (cov_radius/2), 
                                           cov_radius*2, cov_radius, cov_pen, cov_brush)
 
+            if self.team_pos:
+                tr, tc = self.team_pos
+                tcen = self.iso_project(tr + 0.5, tc + 0.5, self.cell_size * 0.35)
+                self.scene.addEllipse(
+                    tcen.x() - 8, tcen.y() - 8, 16, 16,
+                    QPen(TEAM_MARKER_COLOR, 2), QBrush(TEAM_MARKER_COLOR),
+                )
+
         else:
             # --- 2D TACTICAL VIEW ---
             if show_risk:
@@ -462,6 +597,32 @@ class CityMindWindow(QMainWindow):
                         self.scene.addLine(x1, y1, x2, y2, QPen(PATH_COLOR, 3))
                     else:
                         self.scene.addLine(x1, y1, x2, y2, QPen(ROAD_COLOR, 2))
+
+                still_open = set()
+                for (u, v) in self.graph.EdgesCost:
+                    still_open.add((min(u, v), max(u, v)))
+                for key in flood_set:
+                    if key in still_open:
+                        continue
+                    u, v = key
+                    x1, y1 = self.get_centered_2d(u[0], u[1])
+                    x2, y2 = self.get_centered_2d(v[0], v[1])
+                    x1 += self.cell_size / 2
+                    y1 += self.cell_size / 2
+                    x2 += self.cell_size / 2
+                    y2 += self.cell_size / 2
+                    self.scene.addLine(x1, y1, x2, y2, QPen(FLOOD_COLOR, 4, Qt.DashLine))
+
+            if show_roads and reroute_on:
+                for u, v in self.reroute_glow_edges:
+                    x1, y1 = self.get_centered_2d(u[0], u[1])
+                    x2, y2 = self.get_centered_2d(v[0], v[1])
+                    x1 += self.cell_size / 2
+                    y1 += self.cell_size / 2
+                    x2 += self.cell_size / 2
+                    y2 += self.cell_size / 2
+                    self.scene.addLine(x1, y1, x2, y2, QPen(QColor(250, 232, 255), 12))
+                    self.scene.addLine(x1, y1, x2, y2, QPen(REROUTE_PATH_COLOR, 6))
 
             if show_roads and show_redundant and getattr(self.graph, "redundancy_ok", False):
                 for key, col, w in ((red_edges_a, REDUNDANT_PATH_A, 6), (red_edges_b, REDUNDANT_PATH_B, 6)):
@@ -504,6 +665,12 @@ class CityMindWindow(QMainWindow):
                     text_item.setDefaultTextColor(top_col)
                     text_item.setFont(QFont("Consolas", 8, QFont.Bold))
                     text_item.setPos(cx + rad/2 - text_item.boundingRect().width()/2, cy + rad/2 - 10)
+
+            if self.team_pos:
+                tr, tc = self.team_pos
+                x, y = self.get_centered_2d(tr, tc)
+                cx, cy = x + self.cell_size / 2, y + self.cell_size / 2
+                self.scene.addEllipse(cx - 9, cy - 9, 18, 18, QPen(TEAM_MARKER_COLOR, 2), QBrush(TEAM_MARKER_COLOR))
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
