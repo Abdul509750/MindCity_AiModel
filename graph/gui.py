@@ -1,18 +1,14 @@
-"""
-══════════════════════════════════════════════════════════════════════════
-CityMind — Advanced Holographic Command Center v4.0
-══════════════════════════════════════════════════════════════════════════
-"""
+
+#CityMind Ai gui
+
 import sys, os, random, math
 
-# pyrefly: ignore [missing-import]
+
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QGraphicsView, QGraphicsScene, 
                              QVBoxLayout, QWidget, QPushButton, QLabel, 
                              QDockWidget, QListWidget, QListWidgetItem, QSpinBox, 
                              QGroupBox, QFormLayout, QCheckBox)
-# pyrefly: ignore [missing-import]
 from PyQt5.QtGui import QColor, QPen, QBrush, QPolygonF, QFont, QPainter, QLinearGradient
-# pyrefly: ignore [missing-import]
 from PyQt5.QtCore import Qt, QPointF, QTimer
 
 sys.setrecursionlimit(10000)
@@ -21,9 +17,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from CityGraph import CityGraph
 from PathCalculationEngine import AstarEngine
 
-# ══════════════════════════════════════════════════════════════════════════
-#  COLOR & AESTHETIC CONSTANTS
-# ══════════════════════════════════════════════════════════════════════════
+#  COLOR CONSTANTS
 
 BG_COLOR = QColor(6, 9, 20)
 GRID_COLOR = QColor(30, 41, 59, 100)
@@ -100,7 +94,7 @@ class CityMindWindow(QMainWindow):
         self.flood_edges = []
         self.view_mode = "3D"  
         self.cell_size = 65
-        # Challenge 4 — medical team mission
+        # Challenge 4 medical team mission
         self.mission_queue = []
         self.mission_ptr = 0
         self.team_pos = None

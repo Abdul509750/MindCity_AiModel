@@ -42,8 +42,9 @@ class LocationNode:
     def printNodes(self):
         print("---- Location Risk Index ---------")
         print(self.RiskIndex)
-
-    # Required by heapq in A* — when two entries have equal f-costs,
+    
+    # things learned today
+    # Required by heapq in A* when two entries have equal f-costs,
     # Python compares the next tuple element (the node). Without this,
     # error occurs in comparison
     def __lt__(self, other):

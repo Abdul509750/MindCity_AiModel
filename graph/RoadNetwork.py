@@ -1,10 +1,9 @@
 import random
 from collections import defaultdict, deque
 
-# --- Shared helpers for Challenge 2 (two independent routes) -----------------
+# Shared helpers for Ch 2 two independent routes
 
-def _teacher_base_cost(nodes, u, v):
-    """Project spec: 1.0 standard; 0.8 if the road touches a residential cell."""
+def edges_cost(nodes, u, v):
     if nodes[u].NodeType == "Residential" or nodes[v].NodeType == "Residential":
         return 0.8
     return 1.0
@@ -21,7 +20,6 @@ def _residual_from_chromosome(canonical_edges, chromosome):
 
 
 def _residual_from_edge_cost_dict(edges_cost):
-    """One unit of capacity per undirected road (same model as the GA safety check)."""
     residual = defaultdict(lambda: defaultdict(int))
     seen = set()
     for (u, v) in edges_cost:
@@ -35,10 +33,10 @@ def _residual_from_edge_cost_dict(edges_cost):
 
 
 def two_disjoint_paths_in_residual(residual, src, dst):
-    """
-    Return (ok, path_a, path_b) using two augmentations (same logic as RoadNetwork safety).
-    Each path is a list of grid positions from src to dst.
-    """
+    
+    #Return (ok, path_a, path_b) using two augmentations (same logic as RoadNetwork safety).
+    #Each path is a list of grid positions from src to dst.
+    
     if src is None or dst is None or src == dst:
         return False, [], []
 
@@ -144,7 +142,7 @@ class RoadNetwork:
         self._setup()
 
     def _pick_primary_hospital_and_depot(self, nodes):
-        """Primary hospital = flagged cell, else first Hospital in row-major order. Depot = first row-major."""
+        #Primary hospital = flagged cell, else first Hospital in row-major order. Depot = first row-major
         self.hospital_pos = None
         self.ambulance_pos = None
         for r in range(self.graph.rows):
@@ -184,7 +182,7 @@ class RoadNetwork:
                 continue
             seen.add(key)
 
-            cost = _teacher_base_cost(nodes, key[0], key[1])
+            cost = edges_cost(nodes, key[0], key[1])
 
             self.canonical_edges.append((key[0], key[1], cost))
             self.graph.EdgesCost[(u, v)] = cost

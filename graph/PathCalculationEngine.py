@@ -120,3 +120,5 @@ class AstarEngine:
             f"{len(remaining_targets)} target(s) left."
         )
         return self.FindSequentialPath(current_node, remaining_targets, graph)
+# things leaarned 
+# A* lazy deletion!!!

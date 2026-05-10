@@ -2,17 +2,17 @@ import copy
 import random
 
 class Algorithms:
-    # Initialize search metrics for diagnostics
+    # Initialization of search metrics for diagnostics
     def __init__(self):
         self.nodes_explored = 0   
         self.backtrack_count = 0  
 
-    # Apply Minimum Remaining Values heuristic with Stochastic Tie-Breaking
+    # Apply MRV heuristic with Stochastic Tie-Breaking
     def MRV(self, csp, graph):
         min_size = float('inf')
         candidates = []
 
-        # --- OPTIMIZATION: Collect all tied minimums to prevent spatial bias ---
+        #  Collect all tied minimums to prevent spatial bias ---
         for position, node in graph.nodes.items():
             if node.NodeType == "":
                 domain_size = len(csp.subDomains[position])
@@ -26,7 +26,7 @@ class Algorithms:
             return random.choice(candidates) # Scatter search across the grid
         return None
 
-    # Execute Forward Checking with local pruning and backtracking
+# forward check
     def ForwardChecking(self, csp, graph):
         node = self.MRV(csp, graph)
 

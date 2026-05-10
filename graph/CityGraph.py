@@ -2,7 +2,7 @@ from LocationNode import LocationNode
 import random
 
 class CityGraph:
-    # Initialize grid dimensions, node storage, and urban planning limits
+    # Initializing tha grid dimensions, node storage, and urban planning limits
     def __init__(self, row, col):
         self.rows = row
         self.cols = col
@@ -29,10 +29,10 @@ class CityGraph:
             "Power Plant":     0,
             "Ambulance Depot": 0
         }
-        # Filled by applyCSP() so GUI / callers can see if any rules stayed violated.
+        # Filled by applyCSP() so GUI callers can see if any rules stayed violated.
         self.csp_all_rules_ok = True
         self.csp_violation_count = 0
-        # Challenge 2: primary hospital, reference depot, two edge-disjoint backup routes (for GUI).
+        # Ch 2 primary hospital, reference depot, two edge-disjoint backup routes.
         self.primary_hospital_pos = None
         self.reference_ambulance_pos = None
         self.redundancy_ok = False
@@ -40,7 +40,7 @@ class CityGraph:
         self.redundancy_path_b = []
         self.initializeGraph()
 
-    # Populate grid with LocationNodes and establish default adjacency costs
+    # Populating grid with LocationNodes and establish default adjacency costs
     def initializeGraph(self):
         for r in range(self.rows):
             for c in range(self.cols):
@@ -55,7 +55,7 @@ class CityGraph:
                     if (nX, nY) in self.nodes:
                         self.EdgesCost[((r,c), (nX,nY))] = 1.0
 
-    # Remove bidirectional edge connectivity between two positions
+    # Removing bidirectional edge connectivity between two positions
     def block_road(self, pos_a, pos_b, reason="flooding"):
         removed = False
         if (pos_a, pos_b) in self.EdgesCost:
