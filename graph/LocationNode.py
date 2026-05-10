@@ -9,10 +9,14 @@ class LocationNode:
         self.RiskIndex = RI
         self.Accessibility_flag = AF
         self.PopulationDensity = PD
+        # Exactly one hospital in the city should have this True (set after CSP).
+        self.is_primary_hospital = False
     
     # Assign node type and generate randomized population density based on category
     def setNodeType(self , NT):
         self.NodeType = NT
+        if NT != "Hospital":
+            self.is_primary_hospital = False
         if NT == "Residential":
             self.PopulationDensity = random.randint(500, 2000)
         elif NT == "School":

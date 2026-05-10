@@ -28,7 +28,16 @@ class CityGraph:
             "Industrial":      0,
             "Power Plant":     0,
             "Ambulance Depot": 0
-        }   
+        }
+        # Filled by applyCSP() so GUI / callers can see if any rules stayed violated.
+        self.csp_all_rules_ok = True
+        self.csp_violation_count = 0
+        # Challenge 2: primary hospital, reference depot, two edge-disjoint backup routes (for GUI).
+        self.primary_hospital_pos = None
+        self.reference_ambulance_pos = None
+        self.redundancy_ok = False
+        self.redundancy_path_a = []
+        self.redundancy_path_b = []
         self.initializeGraph()
 
     # Populate grid with LocationNodes and establish default adjacency costs
@@ -63,21 +72,84 @@ class CityGraph:
         return removed
 
     # Re-establish bidirectional edge connectivity with a specified cost
-    def unblock_road(self, pos_a, pos_b, cost=1.0):
+    def unblock_road(self, pos_a, pos_b, cost=None):
         if pos_a in self.nodes and pos_b in self.nodes:
-            self.EdgesCost[(pos_a, pos_b)] = cost
-            self.EdgesCost[(pos_b, pos_a)] = cost
-            msg = f"[EVENT] Road {pos_a} <-> {pos_b} RESTORED (cost={cost:.2f})."
+            if cost is None:
+                self.EdgesCost[(pos_a, pos_b)] = self.directed_travel_cost(pos_a, pos_b)
+                self.EdgesCost[(pos_b, pos_a)] = self.directed_travel_cost(pos_b, pos_a)
+                msg = (
+                    f"[EVENT] Road {pos_a} <-> {pos_b} RESTORED "
+                    f"(costs {self.EdgesCost[(pos_a, pos_b)]:.2f} / {self.EdgesCost[(pos_b, pos_a)]:.2f})."
+                )
+            else:
+                self.EdgesCost[(pos_a, pos_b)] = cost
+                self.EdgesCost[(pos_b, pos_a)] = cost
+                msg = f"[EVENT] Road {pos_a} <-> {pos_b} RESTORED (cost={cost:.2f})."
             self.event_log.append(msg)
             print(msg)
 
-    # Update weights for edges connecting two residential zones
-    def apply_residential_edge_costs(self):
-        for (u, v) in list(self.EdgesCost.keys()):
-            node_u = self.nodes[u]
-            node_v = self.nodes[v]
-            if node_u.NodeType == "Residential" and node_v.NodeType == "Residential":
-                self.EdgesCost[(u, v)] = 0.8
+    def _designate_primary_hospital(self):
+        """Exactly one primary hospital: first Hospital in row-major (r, then c) order."""
+        for n in self.nodes.values():
+            n.is_primary_hospital = False
+        for r in range(self.rows):
+            for c in range(self.cols):
+                node = self.nodes[(r, c)]
+                if node.NodeType == "Hospital":
+                    node.is_primary_hospital = True
+                    return
+
+    def directed_travel_cost(self, from_pos, to_pos):
+        """Teacher base (1.0 / 0.8) × destination risk multiplier (Challenge 5)."""
+        u, v = from_pos, to_pos
+        base = 1.0
+        if self.nodes[u].NodeType == "Residential" or self.nodes[v].NodeType == "Residential":
+            base = 0.8
+        mult = 1.0
+        ri = self.nodes[v].RiskIndex
+        if ri in ("High", "Medium", "Low"):
+            mult = {"High": 1.5, "Medium": 1.2, "Low": 1.0}[ri]
+        return base * mult
+
+    def sync_redundancy_paths(self):
+        """Re-check two independent routes after roads or depot locations change."""
+        from RoadNetwork import two_disjoint_paths_from_edge_cost
+
+        self._designate_primary_hospital()
+        hpos = None
+        depo = None
+        for r in range(self.rows):
+            for c in range(self.cols):
+                pos = (r, c)
+                node = self.nodes[pos]
+                if node.NodeType == "Hospital" and node.is_primary_hospital:
+                    hpos = pos
+                if depo is None and node.NodeType == "Ambulance Depot":
+                    depo = pos
+        if hpos is None:
+            for r in range(self.rows):
+                for c in range(self.cols):
+                    pos = (r, c)
+                    if self.nodes[pos].NodeType == "Hospital":
+                        hpos = pos
+                        break
+                if hpos is not None:
+                    break
+
+        self.primary_hospital_pos = hpos
+        self.reference_ambulance_pos = depo
+        ok, pa, pb = two_disjoint_paths_from_edge_cost(self.EdgesCost, hpos, depo)
+        self.redundancy_ok = ok
+        self.redundancy_path_a = pa
+        self.redundancy_path_b = pb
+        if ok:
+            self.log_event(
+                f"[Challenge 2] Redundant routes OK: primary hospital {hpos} -> depot {depo}."
+            )
+        else:
+            self.log_event(
+                f"[Challenge 2] SAFETY: cannot find two independent routes {hpos} -> {depo} on current roads."
+            )
 
     # Record and display a simulation event
     def log_event(self, message):
@@ -113,7 +185,8 @@ class CityGraph:
             src.PopulationDensity = temp[3]
 
         self.log_event("[Challenge 3] Ambulance positions re-evaluated and updated.")
-            
+        self.sync_redundancy_paths()
+
     # Trigger Forward Checking CSP to assign node types
     def applyCSP(self):
         from my_CSP import CSP
@@ -123,14 +196,27 @@ class CityGraph:
         result = alg.ForwardChecking(csp, self)
         if result is None:
             print("[ERROR] CSP failed — no valid layout found.")
+            self.csp_all_rules_ok = False
+            self.csp_violation_count = 0
         else:
-            print("[CSP] City layout assigned successfully.")
-            self.apply_residential_edge_costs()
+            self.csp_all_rules_ok = csp.fully_satisfied
+            self.csp_violation_count = len(csp.violations_after_repair)
+            if csp.fully_satisfied:
+                print("[CSP] City layout assigned — all planning rules satisfied.")
+            else:
+                print(
+                    f"[CSP] City layout assigned — {self.csp_violation_count} planning rule(s) "
+                    "still violated (see CSP Validation above). Continuing."
+                )
+            self._designate_primary_hospital()
         return result
 
     # Invoke RoadNetwork construction via Genetic Algorithm
     def assignCosts(self):
         from RoadNetwork import RoadNetwork
+        self.redundancy_path_a = []
+        self.redundancy_path_b = []
+        self.redundancy_ok = False
         rn = RoadNetwork(self)
         rn.build()
         return rn

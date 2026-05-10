@@ -31,10 +31,24 @@ GRID_COLOR = QColor(30, 41, 59, 100)
 ROAD_COLOR = QColor(71, 85, 105, 150)
 PATH_COLOR = QColor(16, 185, 129)  # Emerald
 FLOOD_COLOR = QColor(239, 68, 68)  # Red
+# Two edge-disjoint backup routes (primary hospital → reference depot)
+REDUNDANT_PATH_A = QColor(6, 182, 212)
+REDUNDANT_PATH_B = QColor(249, 115, 22)
 
-def get_node_style(node_type, risk_index="Low"):
+def path_to_undirected_edges(path):
+    edges = set()
+    if not path or len(path) < 2:
+        return edges
+    for i in range(len(path) - 1):
+        a, b = path[i], path[i + 1]
+        edges.add((min(a, b), max(a, b)))
+    return edges
+
+def get_node_style(node_type, risk_index="Low", is_primary_hospital=False):
     """Returns (CoreColor, EdgeColor, HeightMultiplier)"""
     if node_type == "Hospital":
+        if is_primary_hospital:
+            return QColor(255, 215, 0), QColor(185, 28, 28), 2.8
         return QColor(255, 255, 255), QColor(220, 38, 38), 2.5 
     elif node_type == "Ambulance Depot":
         return QColor(255, 255, 255), QColor(148, 163, 184), 1.0
@@ -137,9 +151,14 @@ class CityMindWindow(QMainWindow):
         self.chk_risk.setChecked(False)
         self.chk_risk.stateChanged.connect(self.render_scene)
 
+        self.chk_redundant = QCheckBox("Backup routes (Hosp→Depot ×2)")
+        self.chk_redundant.setChecked(True)
+        self.chk_redundant.stateChanged.connect(self.render_scene)
+
         layer_layout.addWidget(self.chk_roads)
         layer_layout.addWidget(self.chk_amb)
         layer_layout.addWidget(self.chk_risk)
+        layer_layout.addWidget(self.chk_redundant)
         layer_group.setLayout(layer_layout)
         control_layout.addWidget(layer_group)
 
@@ -201,7 +220,13 @@ class CityMindWindow(QMainWindow):
         
         self.graph = CityGraph(rows, cols)
         self.graph.applyCSP()
-        self.log("Constraints applied. Topology valid.", "success")
+        if self.graph.csp_all_rules_ok:
+            self.log("Constraints applied — all planning rules satisfied.", "success")
+        else:
+            self.log(
+                f"Constraints applied — {self.graph.csp_violation_count} rule(s) still violated (see terminal).",
+                "warn",
+            )
         
         self.graph.assignCosts()
         self.graph.applyRiskAnalysis()
@@ -286,6 +311,9 @@ class CityMindWindow(QMainWindow):
         show_roads = self.chk_roads.isChecked()
         show_amb = self.chk_amb.isChecked()
         show_risk = self.chk_risk.isChecked()
+        show_redundant = self.chk_redundant.isChecked()
+        red_edges_a = path_to_undirected_edges(getattr(self.graph, "redundancy_path_a", []) or [])
+        red_edges_b = path_to_undirected_edges(getattr(self.graph, "redundancy_path_b", []) or [])
         
         if self.view_mode == "3D":
             nodes_data.sort(key=lambda item: item[0] + item[1])
@@ -302,7 +330,9 @@ class CityMindWindow(QMainWindow):
             
             if show_risk:
                 for r, c, nd in nodes_data:
-                    top_col, _, _ = get_node_style(nd.NodeType, getattr(nd, 'RiskIndex', 'Low'))
+                    top_col, _, _ = get_node_style(
+                        nd.NodeType, getattr(nd, 'RiskIndex', 'Low'), getattr(nd, 'is_primary_hospital', False)
+                    )
                     b1 = self.iso_project(r, c, 0)
                     b2 = self.iso_project(r, c+1, 0)
                     b3 = self.iso_project(r+1, c+1, 0)
@@ -326,9 +356,18 @@ class CityMindWindow(QMainWindow):
                     else:
                         self.scene.addLine(p1.x(), p1.y(), p2.x(), p2.y(), QPen(ROAD_COLOR, 2))
 
+            if show_roads and show_redundant and getattr(self.graph, "redundancy_ok", False):
+                for key, col, w in ((red_edges_a, REDUNDANT_PATH_A, 5), (red_edges_b, REDUNDANT_PATH_B, 5)):
+                    for u, v in key:
+                        p1 = self.iso_project(u[0] + 0.5, u[1] + 0.5, 0)
+                        p2 = self.iso_project(v[0] + 0.5, v[1] + 0.5, 0)
+                        self.scene.addLine(p1.x(), p1.y(), p2.x(), p2.y(), QPen(col, w))
+
             # Render 3D Prisms with Gradients
             for r, c, nd in nodes_data:
-                top_col, side_col, h_mult = get_node_style(nd.NodeType, getattr(nd, 'RiskIndex', 'Low'))
+                top_col, side_col, h_mult = get_node_style(
+                    nd.NodeType, getattr(nd, 'RiskIndex', 'Low'), getattr(nd, 'is_primary_hospital', False)
+                )
                 h = h_mult * self.cell_size * 0.45
                 pad = 0.20  # Smaller footprint for sleeker look
                 
@@ -401,7 +440,9 @@ class CityMindWindow(QMainWindow):
             # --- 2D TACTICAL VIEW ---
             if show_risk:
                 for r, c, nd in nodes_data:
-                    top_col, _, _ = get_node_style(nd.NodeType, getattr(nd, 'RiskIndex', 'Low'))
+                    top_col, _, _ = get_node_style(
+                        nd.NodeType, getattr(nd, 'RiskIndex', 'Low'), getattr(nd, 'is_primary_hospital', False)
+                    )
                     x, y = self.get_centered_2d(r, c)
                     self.scene.addRect(x, y, self.cell_size, self.cell_size, QPen(Qt.NoPen), QBrush(QColor(top_col.red(), top_col.green(), top_col.blue(), 30)))
 
@@ -422,6 +463,17 @@ class CityMindWindow(QMainWindow):
                     else:
                         self.scene.addLine(x1, y1, x2, y2, QPen(ROAD_COLOR, 2))
 
+            if show_roads and show_redundant and getattr(self.graph, "redundancy_ok", False):
+                for key, col, w in ((red_edges_a, REDUNDANT_PATH_A, 6), (red_edges_b, REDUNDANT_PATH_B, 6)):
+                    for u, v in key:
+                        x1, y1 = self.get_centered_2d(u[0], u[1])
+                        x2, y2 = self.get_centered_2d(v[0], v[1])
+                        x1 += self.cell_size / 2
+                        y1 += self.cell_size / 2
+                        x2 += self.cell_size / 2
+                        y2 += self.cell_size / 2
+                        self.scene.addLine(x1, y1, x2, y2, QPen(col, w))
+
             if show_amb and self.amb_positions:
                 grid_area = self.graph.rows * self.graph.cols
                 area_per_amb = grid_area / len(self.amb_positions)
@@ -435,7 +487,9 @@ class CityMindWindow(QMainWindow):
                                           QPen(QColor(16, 185, 129, 200), 2, Qt.DashLine), QBrush(QColor(16, 185, 129, 20)))
 
             for r, c, nd in nodes_data:
-                top_col, side_col, _ = get_node_style(nd.NodeType, getattr(nd, 'RiskIndex', 'Low'))
+                top_col, side_col, _ = get_node_style(
+                    nd.NodeType, getattr(nd, 'RiskIndex', 'Low'), getattr(nd, 'is_primary_hospital', False)
+                )
                 x, y = self.get_centered_2d(r, c)
                 rad = self.cell_size * 0.5
                 cx = x + (self.cell_size - rad)/2

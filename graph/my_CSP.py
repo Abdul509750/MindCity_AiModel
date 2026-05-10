@@ -1,6 +1,5 @@
 from Algorithm import Algorithms
 import random
-import copy
 import math
 
 class CSP:
@@ -13,6 +12,9 @@ class CSP:
         self.assignment = {}
         self.algoObj = Algorithms()
         self.conflict_report = []
+        # After validateFinalLayout: True only if every rule passes (including after repair).
+        self.fully_satisfied = False
+        self.violations_after_repair = []
         self.assignSubdomains()
         
     # Retrieve possible types for a specific node variable
@@ -133,10 +135,9 @@ class CSP:
 
         return True
 
-    # Audit the completed graph for all complex constraints and trigger repairs
-    def validateFinalLayout(self, graph):
+    def violations_for_layout(self, graph):
+        """All layout rules in one place. Returns a list of small dicts for printing."""
         violations = []
-
         for position, node in graph.nodes.items():
             if node.NodeType == "Residential":
                 if not self.checkHospitalAvailability(node, graph.nodes):
@@ -153,7 +154,7 @@ class CSP:
                         "rule": "No Industrial within 2 hops"
                     })
 
-        coordinates = [(1,0), (0,1), (-1,0), (0,-1)]
+        coordinates = [(1, 0), (0, 1), (-1, 0), (0, -1)]
         for position, node in graph.nodes.items():
             if node.NodeType == "Industrial":
                 r, c = position
@@ -167,45 +168,55 @@ class CSP:
                                 "node_type": "Industrial",
                                 "rule": f"Adjacent to {nbr_type} at ({nr},{nc})"
                             })
+        return violations
+
+    def _print_violation_list(self, title, violations):
+        print(title)
+        if not violations:
+            print("  (none)")
+            return
+        for v in violations:
+            print(f"  -> {v['node_type']} at {v['position']}: {v['rule']}")
+
+    # Audit the completed graph for all complex constraints and trigger repairs
+    def validateFinalLayout(self, graph):
+        violations = self.violations_for_layout(graph)
 
         if len(violations) == 0:
-            print("[CSP Validation] Layout valid — all constraints satisfied ✓")
-            return True
+            print("[CSP Validation] Layout valid — all constraints satisfied.")
+            self.conflict_report = []
+            self.violations_after_repair = []
+            self.fully_satisfied = True
+            return
+
+        print("\n[CSP Validation] Violations found — before repair:")
+        self._print_violation_list("  Details:", violations)
+
+        rule_counts = {}
+        for v in violations:
+            rule = v["rule"]
+            rule_counts[rule] = rule_counts.get(rule, 0) + 1
+        print("\n[CSP Validation] Summary (by rule):")
+        for rule, count in sorted(rule_counts.items(), key=lambda x: -x[1]):
+            print(f"  -> '{rule}': {count} time(s)")
+
+        self.conflict_report = violations
+        print("\n[CSP Validation] Trying simple repairs (may not fix everything)...")
+        self.minimumConflictFix(violations, graph)
+
+        after = self.violations_for_layout(graph)
+        self.violations_after_repair = after
+        self.fully_satisfied = len(after) == 0
+
+        print("\n[CSP Validation] After repair:")
+        self._print_violation_list("  Still violating:", after)
+        if self.fully_satisfied:
+            print("[CSP Validation] All rules satisfied after repair.")
         else:
-            print("\n[CSP Validation] Violations found — conflict report:")
-            rule_counts = {}
-            for v in violations:
-                rule = v['rule']
-                rule_counts[rule] = rule_counts.get(rule, 0) + 1
-                print(f"  -> {v['node_type']} at {v['position']} violated rule: {v['rule']}")
-
-            print("\n[CSP Validation] Conflict summary:")
-            for rule, count in sorted(rule_counts.items(), key=lambda x: -x[1]):
-                print(f"  -> Rule '{rule}' caused {count} violation(s)")
-
-            self.conflict_report = violations
-            print("\n[CSP Validation] Attempting minimum-conflict repair...")
-            self.minimumConflictFix(violations, graph)
-
-            remaining = self._count_remaining_violations(graph)
-            if remaining == 0:
-                print("[CSP Validation] Repair successful — all constraints now satisfied ✓")
-                return True
-            else:
-                print(f"[CSP Validation] {remaining} violation(s) remain — proposing minimum-conflict solution.")
-                return True
-    
-    # Internal violation counter for post-repair assessment
-    def _count_remaining_violations(self, graph):
-        count = 0
-        for position, node in graph.nodes.items():
-            if node.NodeType == "Residential":
-                if not self.checkHospitalAvailability(node, graph.nodes):
-                    count += 1
-            if node.NodeType == "Power Plant":
-                if not self.checkIndustrialZone(node, graph.nodes):
-                    count += 1
-        return count
+            print(
+                f"[CSP Validation] {len(after)} violation(s) left — "
+                "layout is best-effort; simulation can still run."
+            )
 
     # Apply heuristic-based corrections to resolve layout conflicts
     def minimumConflictFix(self, violations, graph):

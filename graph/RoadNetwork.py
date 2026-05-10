@@ -1,6 +1,85 @@
 import random
-import copy
 from collections import defaultdict, deque
+
+# --- Shared helpers for Challenge 2 (two independent routes) -----------------
+
+def _teacher_base_cost(nodes, u, v):
+    """Project spec: 1.0 standard; 0.8 if the road touches a residential cell."""
+    if nodes[u].NodeType == "Residential" or nodes[v].NodeType == "Residential":
+        return 0.8
+    return 1.0
+
+
+def _residual_from_chromosome(canonical_edges, chromosome):
+    residual = defaultdict(lambda: defaultdict(int))
+    for i, bit in enumerate(chromosome):
+        if bit:
+            u, v, _ = canonical_edges[i]
+            residual[u][v] += 1
+            residual[v][u] += 1
+    return residual
+
+
+def _residual_from_edge_cost_dict(edges_cost):
+    """One unit of capacity per undirected road (same model as the GA safety check)."""
+    residual = defaultdict(lambda: defaultdict(int))
+    seen = set()
+    for (u, v) in edges_cost:
+        a, b = (u, v) if u < v else (v, u)
+        if (a, b) in seen:
+            continue
+        seen.add((a, b))
+        residual[a][b] = 1
+        residual[b][a] = 1
+    return residual
+
+
+def two_disjoint_paths_in_residual(residual, src, dst):
+    """
+    Return (ok, path_a, path_b) using two augmentations (same logic as RoadNetwork safety).
+    Each path is a list of grid positions from src to dst.
+    """
+    if src is None or dst is None or src == dst:
+        return False, [], []
+
+    residual = defaultdict(lambda: defaultdict(int), {k: dict(v) for k, v in residual.items()})
+    paths = []
+
+    for _ in range(2):
+        parent = {src: None}
+        queue = deque([src])
+        found = False
+        while queue and not found:
+            node = queue.popleft()
+            for nbr, cap in residual[node].items():
+                if cap > 0 and nbr not in parent:
+                    parent[nbr] = node
+                    if nbr == dst:
+                        found = True
+                        break
+                    queue.append(nbr)
+        if not found:
+            return (len(paths) >= 2), paths[0] if paths else [], paths[1] if len(paths) > 1 else []
+
+        seg = []
+        node = dst
+        while node != src:
+            prev = parent[node]
+            residual[prev][node] -= 1
+            residual[node][prev] += 1
+            seg.append(node)
+            node = prev
+        seg.append(src)
+        seg.reverse()
+        paths.append(seg)
+
+    return True, paths[0], paths[1]
+
+
+def two_disjoint_paths_from_edge_cost(edges_cost, src, dst):
+    res = _residual_from_edge_cost_dict(edges_cost)
+    return two_disjoint_paths_in_residual(res, src, dst)
+
 
 class _UnionFind:
     def __init__(self, elements):
@@ -29,17 +108,6 @@ class _UnionFind:
         return all(self.find(e) == root for e in elements)
 
 class RoadNetwork:
-    _EDGE_COST_TABLE = {
-        frozenset({"Hospital",        "Ambulance Depot"}): 0.5,
-        frozenset({"Hospital",        "Residential"}):     0.8,
-        frozenset({"Ambulance Depot", "Residential"}):     0.8,
-        frozenset({"Industrial",      "Residential"}):     1.5,
-        frozenset({"Power Plant",      "Residential"}):     1.4,
-        frozenset({"Industrial",      "Power Plant"}):     0.6,
-        frozenset({"School",          "Residential"}):     0.7,
-    }
-    _DEFAULT_EDGE_COST = 1.0
-
     def __init__(
         self,
         city_graph,
@@ -75,6 +143,36 @@ class RoadNetwork:
 
         self._setup()
 
+    def _pick_primary_hospital_and_depot(self, nodes):
+        """Primary hospital = flagged cell, else first Hospital in row-major order. Depot = first row-major."""
+        self.hospital_pos = None
+        self.ambulance_pos = None
+        for r in range(self.graph.rows):
+            for c in range(self.graph.cols):
+                pos = (r, c)
+                node = nodes[pos]
+                if node.NodeType == "Hospital" and node.is_primary_hospital:
+                    self.hospital_pos = pos
+                    break
+            if self.hospital_pos is not None:
+                break
+        if self.hospital_pos is None:
+            for r in range(self.graph.rows):
+                for c in range(self.graph.cols):
+                    pos = (r, c)
+                    if nodes[pos].NodeType == "Hospital":
+                        self.hospital_pos = pos
+                        break
+                if self.hospital_pos is not None:
+                    break
+
+        for r in range(self.graph.rows):
+            for c in range(self.graph.cols):
+                pos = (r, c)
+                if nodes[pos].NodeType == "Ambulance Depot":
+                    self.ambulance_pos = pos
+                    return
+
     # Consolidate edges and identify critical infrastructure nodes
     def _setup(self):
         seen = set()
@@ -86,26 +184,13 @@ class RoadNetwork:
                 continue
             seen.add(key)
 
-            type_u = nodes[u].NodeType or "Unknown"
-            type_v = nodes[v].NodeType or "Unknown"
-            fkey   = frozenset({type_u, type_v})
-            cost   = self._EDGE_COST_TABLE.get(fkey, self._DEFAULT_EDGE_COST)
+            cost = _teacher_base_cost(nodes, key[0], key[1])
 
             self.canonical_edges.append((key[0], key[1], cost))
             self.graph.EdgesCost[(u, v)] = cost
             self.graph.EdgesCost[(v, u)] = cost
 
-        best_hosp_pop = -1
-        best_amb_pop  = -1
-        for pos, node in nodes.items():
-            if node.NodeType == "Hospital":
-                if node.PopulationDensity > best_hosp_pop:
-                    best_hosp_pop = node.PopulationDensity
-                    self.hospital_pos = pos
-            elif node.NodeType == "Ambulance Depot":
-                if node.PopulationDensity > best_amb_pop:
-                    best_amb_pop = node.PopulationDensity
-                    self.ambulance_pos = pos
+        self._pick_primary_hospital_and_depot(nodes)
 
     # Execute GA optimization loop
     def build(self):
@@ -191,36 +276,9 @@ class RoadNetwork:
         if self.hospital_pos is None or self.ambulance_pos is None:
             return True
         src, dst = self.hospital_pos, self.ambulance_pos
-        residual = defaultdict(lambda: defaultdict(int))
-        for i, bit in enumerate(chromosome):
-            if bit:
-                u, v, _ = self.canonical_edges[i]
-                residual[u][v] += 1
-                residual[v][u] += 1
-
-        flow = 0
-        for _ in range(2):
-            parent = {src: None}
-            queue  = deque([src])
-            found  = False
-            while queue and not found:
-                node = queue.popleft()
-                for nbr, cap in residual[node].items():
-                    if cap > 0 and nbr not in parent:
-                        parent[nbr] = node
-                        if nbr == dst:
-                            found = True
-                            break
-                        queue.append(nbr)
-            if not found: break
-            node = dst
-            while node != src:
-                prev = parent[node]
-                residual[prev][node] -= 1
-                residual[node][prev] += 1
-                node = prev
-            flow += 1
-        return flow >= 2
+        residual = _residual_from_chromosome(self.canonical_edges, chromosome)
+        ok, _, _ = two_disjoint_paths_in_residual(residual, src, dst)
+        return ok
 
     def _tournament_select(self, population, scored):
         contestants = random.sample(range(len(population)), min(self.tournament_k, len(population)))
@@ -250,13 +308,24 @@ class RoadNetwork:
             built_set.add((u, v))
             built_set.add((v, u))
 
-        for edge_key in list(self.graph.EdgesCost.keys()):
-            if edge_key not in built_set:
-                del self.graph.EdgesCost[edge_key]
+        if not self.safety_satisfied:
+            print(
+                "[RoadNetwork] SAFETY VIOLATED: two independent routes "
+                "Primary Hospital -> Ambulance Depot not found for this road set."
+            )
+            print(
+                "[RoadNetwork] Keeping the full grid roads (no pruning) so the city stays connected."
+            )
+        else:
+            for edge_key in list(self.graph.EdgesCost.keys()):
+                if edge_key not in built_set:
+                    del self.graph.EdgesCost[edge_key]
 
-        for u, v, cost in self.built_roads:
-            self.graph.EdgesCost[(u, v)] = cost
-            self.graph.EdgesCost[(v, u)] = cost
+            for u, v, cost in self.built_roads:
+                self.graph.EdgesCost[(u, v)] = cost
+                self.graph.EdgesCost[(v, u)] = cost
+
+        self._push_redundancy_paths_to_graph(ch)
 
     def _report(self):
         print("\n" + "=" * 62)
@@ -268,6 +337,29 @@ class RoadNetwork:
         print(f"  Fully connected   : {'YES' if self._is_connected(self.best_chromosome) else 'NO'}")
         print(f"  Safety constraint : {'SATISFIED' if self.safety_satisfied else 'VIOLATED'}")
         print("=" * 62 + "\n")
+
+    def _push_redundancy_paths_to_graph(self, chromosome):
+        """Store the two backup routes on the city graph for the GUI (current hospital/depot)."""
+        g = self.graph
+        self._pick_primary_hospital_and_depot(g.nodes)
+        g.primary_hospital_pos = self.hospital_pos
+        g.reference_ambulance_pos = self.ambulance_pos
+
+        if self.hospital_pos is None or self.ambulance_pos is None:
+            g.redundancy_ok = False
+            g.redundancy_path_a = []
+            g.redundancy_path_b = []
+            return
+
+        if self.safety_satisfied:
+            res = _residual_from_chromosome(self.canonical_edges, chromosome)
+        else:
+            res = _residual_from_edge_cost_dict(g.EdgesCost)
+        ok, pa, pb = two_disjoint_paths_in_residual(res, self.hospital_pos, self.ambulance_pos)
+        g.redundancy_ok = ok
+        g.redundancy_path_a = pa
+        g.redundancy_path_b = pb
+
 
 if __name__ == "__main__":
     from CityGraph import CityGraph
